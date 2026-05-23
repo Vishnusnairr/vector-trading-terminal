@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  secret: process.env.AUTH_SECRET ?? 'vector-algo-terminal-secret-2026-production-key',
   adapter: PrismaAdapter(prisma),
   providers: [
     Credentials({
