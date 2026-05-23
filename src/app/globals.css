@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   Vector — Global Styles
+   Institutional terminal aesthetic, dark by default
+============================================================================ */
+
+@layer base {
+  :root {
+    --color-bg:           7 8 11;
+    --color-bg-panel:     14 16 21;
+    --color-bg-elevated:  20 22 28;
+    --color-border:       255 255 255 / 0.12; /* highly visible card outlines */
+    --color-border-strong: 255 255 255 / 0.2;
+    --color-fg:           248 250 252;       /* bright crisp white (#f8fafc) for maximum legibility */
+    --color-fg-dim:       203 213 225;       /* highly visible secondary description text (#cbd5e1) */
+    --color-fg-mute:      148 163 184;       /* perfectly legible labels and subtitles (#94a3b8) */
+    --color-bull:         0 229 168;
+    --color-bear:         255 84 112;
+    --color-cyan:         0 212 255;
+    --color-amber:        255 181 71;
+    --color-violet:       157 107 255;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  html {
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-bg text-fg font-sans min-h-screen;
+    background-image: radial-gradient(
+      ellipse 80% 50% at 50% -10%,
+      rgba(0, 212, 255, 0.08),
+      transparent
+    );
+    background-attachment: fixed;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  ::selection {
+    background: rgba(0, 212, 255, 0.3);
+    color: #fff;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-bg-panel/70 backdrop-blur-xl border border-border rounded-xl overflow-hidden;
+  }
+
+  .panel-title {
+    @apply text-[11px] uppercase tracking-[0.12em] font-medium text-fg-dim;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .glow-cyan {
+    box-shadow: 0 0 24px rgba(0, 212, 255, 0.25),
+      inset 0 0 12px rgba(0, 212, 255, 0.08);
+  }
+
+  .glow-bull {
+    box-shadow: 0 0 24px rgba(0, 229, 168, 0.3);
+  }
+
+  .glow-bear {
+    box-shadow: 0 0 24px rgba(255, 84, 112, 0.3);
+  }
+}

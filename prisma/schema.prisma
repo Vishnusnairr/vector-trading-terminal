@@ -1,0 +1,413 @@
+// ============================================================================
+// Vector — Full Prisma schema
+//
+// Notes:
+//  - SQLite for dev. Switch `provider = "postgresql"` for production.
+//    Nothing else changes — every type used here is portable.
+//  - SQLite has no enums; we use String columns with const-union types
+//    in src/types/index.ts and validate at the API boundary with Zod.
+//  - Money/prices use Float. Adequate for paper trading; switch to
+//    Decimal when moving to Postgres + real money.
+//  - JSON config fields (strategy rules, backtest equity curves) are
+//    stored as String + parsed via helpers in src/lib/json.ts.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// AUTH MODELS — required exact shape for NextAuth v5 + Prisma adapter
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  // Hashed password for credentials provider (unused by OAuth users)
+  password      String?
+
+  // Account state
+  paperBalance  Float     @default(100000)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  strategies    Strategy[]
+  orders        Order[]
+  positions     Position[]
+  trades        Trade[]
+  watchlist     WatchlistItem[]
+  notifications Notification[]
+  backtests     Backtest[]
+  riskSettings  RiskSettings?
+  apiKeys       ApiKey[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================================
+// MARKET REFERENCE DATA
+// ============================================================================
+
+model Instrument {
+  /// Ticker e.g. 'BTCUSD', 'AAPL'
+  symbol      String   @id
+  name        String
+  /// 'crypto' | 'equity' | 'etf' | 'forex' | 'commodity'
+  assetClass  String
+  /// Ultra Safe Mode filter — true means blocked when USM is on
+  risky       Boolean  @default(false)
+  tickSize    Float    @default(0.01)
+  minQty      Float    @default(0.0001)
+  /// Optional reference start price for seed data
+  refPrice    Float?
+  /// Annualized vol used by the in-memory market simulator
+  vol         Float    @default(0.001)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  watchlistItems WatchlistItem[]
+
+  @@index([assetClass])
+  @@index([risky])
+}
+
+// ============================================================================
+// STRATEGIES — block-based config stored as JSON in `configJson`
+// ============================================================================
+
+model Strategy {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  /// 'draft' | 'paper' | 'live' | 'paused'
+  status      String   @default("draft")
+  /// JSON-serialized StrategyConfig (entryConditions, exitConditions,
+  /// riskPerTrade, stopLossPct, takeProfitPct, symbols, timeframe)
+  configJson  String
+  /// JSON-serialized BacktestMetrics from most recent run (optional)
+  metricsJson String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders    Order[]
+  positions Position[]
+  backtests Backtest[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================================
+// ORDERS / POSITIONS / TRADES
+// ============================================================================
+
+model Order {
+  id           String    @id @default(cuid())
+  userId       String
+  strategyId   String?
+  symbol       String
+  /// 'buy' | 'sell'
+  side         String
+  /// 'market' | 'limit' | 'stop' | 'stop_limit'
+  type         String
+  qty          Float
+  /// Limit price (for limit/stop_limit)
+  price        Float?
+  /// Stop trigger price (for stop/stop_limit)
+  stopPrice    Float?
+  /// Optional protective levels
+  stopLoss     Float?
+  takeProfit   Float?
+  /// 'pending' | 'filled' | 'partial' | 'cancelled' | 'rejected'
+  status       String    @default("pending")
+  filledPrice  Float?
+  filledQty    Float     @default(0)
+  fees         Float     @default(0)
+  /// Rejection reason for risk/USM blocks
+  rejectReason String?
+  notes        String?
+
+  createdAt    DateTime  @default(now())
+  filledAt     DateTime?
+  cancelledAt  DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy Strategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  trades   Trade[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([userId, createdAt])
+  @@index([symbol])
+}
+
+model Position {
+  id             String    @id @default(cuid())
+  userId         String
+  strategyId     String?
+  symbol         String
+  /// 'buy' | 'sell' (long or short)
+  side           String
+  qty            Float
+  entryPrice     Float
+  /// Latest mark — updated by the price stream
+  markPrice      Float
+  realizedPnl    Float     @default(0)
+  unrealizedPnl  Float     @default(0)
+  stopLoss       Float?
+  takeProfit     Float?
+
+  openedAt       DateTime  @default(now())
+  closedAt       DateTime?
+  closePrice     Float?
+  closeReason    String?  // 'manual' | 'stop_loss' | 'take_profit' | 'liquidation'
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy Strategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, closedAt])
+  @@index([symbol])
+}
+
+model Trade {
+  id      String   @id @default(cuid())
+  userId  String
+  orderId String
+  symbol  String
+  /// 'buy' | 'sell'
+  side    String
+  qty     Float
+  price   Float
+  fees    Float    @default(0)
+  /// Realized P&L attributable to this fill (null on opening fills)
+  pnl     Float?
+  ts      DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([userId, ts])
+  @@index([orderId])
+}
+
+// ============================================================================
+// WATCHLIST
+// ============================================================================
+
+model WatchlistItem {
+  id        String @id @default(cuid())
+  userId    String
+  symbol    String
+  /// Display order — lower = higher in the list
+  position  Int    @default(0)
+  createdAt DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument Instrument @relation(fields: [symbol], references: [symbol], onDelete: Cascade)
+
+  @@unique([userId, symbol])
+  @@index([userId])
+}
+
+// ============================================================================
+// BACKTESTS
+// ============================================================================
+
+model Backtest {
+  id            String   @id @default(cuid())
+  userId        String
+  strategyId    String
+  name          String?
+
+  startDate     DateTime
+  endDate       DateTime
+  initialCapital Float
+  commissionPct Float    @default(0.001)
+  slippagePct   Float    @default(0.0005)
+
+  /// Summary metrics
+  totalReturn      Float?
+  totalReturnPct   Float?
+  sharpe           Float?
+  maxDrawdown      Float?
+  maxDrawdownPct   Float?
+  winRate          Float?
+  totalTrades      Int?
+  avgWin           Float?
+  avgLoss          Float?
+
+  /// JSON: equity curve points + trade log
+  equityCurveJson  String?
+  tradeLogJson     String?
+
+  /// 'queued' | 'running' | 'completed' | 'failed'
+  status      String   @default("queued")
+  errorMsg    String?
+
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([strategyId])
+}
+
+// ============================================================================
+// RISK SETTINGS — one row per user
+// ============================================================================
+
+model RiskSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  ultraSafeMode             Boolean @default(false)
+  maxRiskPerTrade           Float   @default(0.02)   // 2%
+  dailyLossLimit            Float   @default(0.05)   // 5%
+  maxConsecutiveLosses      Int     @default(3)
+  cooldownMinutes           Int     @default(60)
+  drawdownReductionThreshold Float  @default(0.1)    // 10%
+
+  /// Last time the cooldown was triggered (null if not in cooldown)
+  cooldownUntil  DateTime?
+  /// Running counter of consecutive losing trades
+  lossStreak     Int       @default(0)
+  /// Realized P&L today (resets daily)
+  dayPnl         Float     @default(0)
+  dayResetAt     DateTime  @default(now())
+
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================================
+// NOTIFICATIONS
+// ============================================================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  /// 'trade_filled' | 'stop_loss_hit' | 'take_profit_hit' | 'risk_alert' | 'strategy_signal' | 'system'
+  type      String
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  /// Optional structured payload as JSON
+  metaJson  String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+// ============================================================================
+// API KEYS — encrypted external broker/exchange credentials (chunk 10)
+// ============================================================================
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  userId    String
+  /// 'alpaca' | 'binance' | 'openai' | etc.
+  provider  String
+  label     String?
+  /// AES-256-GCM encrypted with AUTH_SECRET as KEK; never stored plaintext
+  encryptedKey    String
+  encryptedSecret String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, provider])
+}
+
+// ============================================================================
+// AUDIT LOG — every trade-affecting action, for debugging and compliance
+// ============================================================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  /// 'order.create' | 'order.cancel' | 'strategy.update' | 'auth.login' | 'risk.usm_toggle' | 'risk.block' | etc.
+  action    String
+  /// Free-form JSON describing the event
+  detailJson String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ============================================================================
+// SYSTEM CONFIG — feature flags, kill-switches, scheduled maintenance
+// ============================================================================
+
+model AppMeta {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
